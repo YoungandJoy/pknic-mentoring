@@ -15,6 +15,7 @@ import {
   DEGREES,
 } from "@/lib/types";
 import { ArrowLeft, ArrowRight, Check, Loader2 } from "lucide-react";
+import ResultPanel from "@/components/ResultPanel";
 
 const STEPS = ["기본 정보", "역할별 정보", "매칭 선호도", "마무리"] as const;
 
@@ -155,21 +156,7 @@ export default function SurveyForm() {
   };
 
   if (done) {
-    return (
-      <div className="max-w-3xl mx-auto px-6 py-20 text-center">
-        <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-brand-primary/20 flex items-center justify-center">
-          <Check className="text-brand-primary" size={28} />
-        </div>
-        <h2 className="text-2xl font-bold mb-3">제출이 완료되었습니다</h2>
-        <p className="text-brand-textDim mb-8">
-          매칭 결과는 2주 이내에 <span className="text-brand-text">{data.email}</span>로
-          안내드립니다.
-        </p>
-        <a href="/" className="btn-ghost">
-          홈으로 돌아가기
-        </a>
-      </div>
-    );
+    return <ResultPanel mine={data} />;
   }
 
   return (
