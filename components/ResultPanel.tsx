@@ -45,13 +45,26 @@ type Props = { mine: SurveyResponse };
 
 const segmentOf = (r: SurveyResponse) => {
   if (r.role === "mentor") return r.country === "US" || r.country === "CA" ? "na_mentor" : "other";
+  // mentee
+  if (r.mentee_type === "professional") {
+    return r.country === "KR" ? "kr_mentee_pro" : "na_mentee_pro";
+  }
+  // student (default)
   const sc = r.mentee_school_country || r.country;
   if (sc === "KR") return "kr_student";
   if (sc === "US" || sc === "CA") return "na_student";
   return "other";
 };
-const segLabel = (s: string) =>
-  s === "na_mentor" ? "NA 멘토" : s === "na_student" ? "NA 학생" : s === "kr_student" ? "KR 학생" : "기타";
+const segLabel = (s: string) => {
+  switch (s) {
+    case "na_mentor": return "NA 멘토";
+    case "na_student": return "NA 학생";
+    case "kr_student": return "KR 학생";
+    case "na_mentee_pro": return "NA 직장인 멘티";
+    case "kr_mentee_pro": return "KR 직장인 멘티";
+    default: return "기타";
+  }
+};
 
 export default function ResultPanel({ mine }: Props) {
   const [pool, setPool] = useState<SurveyResponse[]>([]);
@@ -78,14 +91,19 @@ export default function ResultPanel({ mine }: Props) {
 
   // Segment distribution (with mine highlighted)
   const segmentData = (() => {
-    const m: Record<string, number> = { na_mentor: 0, na_student: 0, kr_student: 0, other: 0 };
+    const m: Record<string, number> = {
+      na_mentor: 0, na_student: 0, kr_student: 0,
+      na_mentee_pro: 0, kr_mentee_pro: 0, other: 0,
+    };
     pool.forEach((r) => {
       m[segmentOf(r)] = (m[segmentOf(r)] || 0) + 1;
     });
     return [
-      { key: "na_mentor", name: "NA 멘토", value: m.na_mentor },
-      { key: "na_student", name: "NA 학생", value: m.na_student },
-      { key: "kr_student", name: "KR 학생", value: m.kr_student },
+      { key: "na_mentor", name: "NA 멘토", value: m.na_mentor || 0 },
+      { key: "na_student", name: "NA 학생", value: m.na_student || 0 },
+      { key: "kr_student", name: "KR 학생", value: m.kr_student || 0 },
+      { key: "na_mentee_pro", name: "NA 직장 멘티", value: m.na_mentee_pro || 0 },
+      { key: "kr_mentee_pro", name: "KR 직장 멘티", value: m.kr_mentee_pro || 0 },
     ].filter((d) => d.value > 0);
   })();
 
@@ -99,25 +117,24 @@ export default function ResultPanel({ mine }: Props) {
     return theirs.some((i) => myIndustries.includes(i));
   }).length;
 
-  // Same school / same company
-  const sameSchoolOrCompanyCount =
-    mine.role === "mentee"
-      ? pool.filter(
-          (r) =>
-            r.email !== mine.email &&
-            r.role === "mentee" &&
-            r.mentee_school &&
-            mine.mentee_school &&
-            r.mentee_school.trim().toLowerCase() === mine.mentee_school.trim().toLowerCase()
-        ).length
-      : pool.filter(
-          (r) =>
-            r.email !== mine.email &&
-            r.role === "mentor" &&
-            r.mentor_company &&
-            mine.mentor_company &&
-            r.mentor_company.trim().toLowerCase() === mine.mentor_company.trim().toLowerCase()
-        ).length;
+  // Same school / same company (지점 분기)
+  const myAffil =
+    mine.role === "mentor"
+      ? mine.mentor_company
+      : mine.mentee_type === "professional"
+      ? mine.mentee_pro_company
+      : mine.mentee_school;
+  const sameSchoolOrCompanyCount = pool.filter((r) => {
+    if (r.email === mine.email) return false;
+    const theirs =
+      r.role === "mentor"
+        ? r.mentor_company
+        : r.mentee_type === "professional"
+        ? r.mentee_pro_company
+        : r.mentee_school;
+    if (!theirs || !myAffil) return false;
+    return theirs.trim().toLowerCase() === myAffil.trim().toLowerCase();
+  }).length;
 
   // For mentees, count NA mentors in their target industries
   const matchableMentors =
@@ -167,12 +184,42 @@ export default function ResultPanel({ mine }: Props) {
   };
 
   const myRoleLabel =
-    mine.role === "mentor" ? "Mentor (북미 현직)" : "Mentee (학생)";
-  const myAffiliation = mine.role === "mentor" ? mine.mentor_company : mine.mentee_school;
+    mine.role === "mentor"
+      ? "Mentor (북미 현직)"
+      : mine.mentee_type === "professional"
+      ? "Mentee (직장인)"
+      : "Mentee (학생)";
+  const myAffiliation =
+    mine.role === "mentor"
+      ? mine.mentor_company
+      : mine.mentee_type === "professional"
+      ? mine.mentee_pro_company
+      : mine.mentee_school;
   const myDetail =
     mine.role === "mentor"
       ? mine.mentor_position || (mine.mentor_functions || []).join(", ")
+      : mine.mentee_type === "professional"
+      ? `${mine.mentee_pro_position || ""}${mine.mentee_pro_seniority ? ` · ${mine.mentee_pro_seniority}` : ""}`
       : `${mine.mentee_major || ""}${mine.mentee_grad_year ? ` · ${mine.mentee_grad_year}` : ""}`;
+
+  // 직장인 멘티 추가 정보
+  const proCareerStageLabel: Record<string, string> = {
+    junior: "🌱 주니어",
+    senior: "🚀 시니어 IC",
+    lead_manager: "👥 팀장·매니저",
+    career_switcher: "🔄 커리어 전환자",
+  };
+  const koreanOriginLabel: Record<string, string> = {
+    kr_native: "한국 출생·성장 후 북미 (1세대)",
+    kr_grad_then_na: "한국 학부 → 북미 대학원/취업",
+    kr_to_na_undergrad: "한국 K-12 → 북미 학부",
+    "1_5_gen": "1.5세 (어린 시절 북미)",
+    "2nd_gen": "북미 출생·성장 (2세 이상)",
+    na_to_kr: "북미에서 자랐고 한국 대학·경력",
+    mixed: "혼합·제3국 경험",
+    non_korean: "한국 백그라운드 없음",
+  };
+  const myKoreanOrigin = mine.role === "mentor" ? mine.mentor_korean_origin : mine.mentee_korean_origin;
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-12">
@@ -205,10 +252,10 @@ export default function ResultPanel({ mine }: Props) {
               {segLabel(mySeg)}
             </span>
           </Field>
-          <Field label={mine.role === "mentor" ? "회사" : "학교"}>
+          <Field label={mine.role === "mentor" || mine.mentee_type === "professional" ? "회사" : "학교"}>
             {myAffiliation || "—"}
           </Field>
-          <Field label={mine.role === "mentor" ? "직무 / 연차" : "전공 / 졸업"}>
+          <Field label={mine.role === "mentor" ? "직무 / 연차" : mine.mentee_type === "professional" ? "직무 / 연차" : "전공 / 졸업"}>
             {myDetail || "—"}
           </Field>
           <Field label="관심 산업">
@@ -229,7 +276,44 @@ export default function ResultPanel({ mine }: Props) {
           {mine.role === "mentor" && (
             <Field label="월 멘토링 가능">{mine.mentor_monthly_hours || "—"}시간</Field>
           )}
+          {mine.mentee_type === "professional" && (
+            <>
+              <Field label="경력 단계">
+                {mine.mentee_pro_career_stage ? proCareerStageLabel[mine.mentee_pro_career_stage] : "—"}
+              </Field>
+              <Field label="멘토링 카테고리">{mine.mentee_pro_focus || "—"}</Field>
+            </>
+          )}
+          {myKoreanOrigin && (
+            <Field label="한국 학력/배경">
+              {koreanOriginLabel[myKoreanOrigin] || myKoreanOrigin}
+            </Field>
+          )}
         </div>
+
+        {/* 직장인 멘티 세부 니즈 표시 */}
+        {mine.mentee_type === "professional" && (mine.mentee_pro_needs || []).length > 0 && (
+          <div className="mt-5 pt-5 border-t border-brand-border">
+            <div className="text-[11px] uppercase tracking-wider text-brand-textDim mb-3">
+              구체적인 멘토링 니즈
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {(mine.mentee_pro_needs || []).map((n) => (
+                <span
+                  key={n}
+                  className="px-2.5 py-1 rounded-full text-[11px] font-medium border"
+                  style={{
+                    background: `${BRAND.primary}1A`,
+                    color: BRAND.primary,
+                    borderColor: `${BRAND.primary}55`,
+                  }}
+                >
+                  {n}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* KPI row */}
@@ -242,8 +326,8 @@ export default function ResultPanel({ mine }: Props) {
           accent={BRAND.primary}
         />
         <MiniKpi
-          icon={mine.role === "mentor" ? Briefcase : GraduationCap}
-          label={`같은 ${mine.role === "mentor" ? "회사" : "학교"}`}
+          icon={mine.role === "mentor" || mine.mentee_type === "professional" ? Briefcase : GraduationCap}
+          label={`같은 ${mine.role === "mentor" || mine.mentee_type === "professional" ? "회사" : "학교"}`}
           value={sameSchoolOrCompanyCount}
           sub={myAffiliation ? `with you` : "—"}
           accent={BRAND.accent}
